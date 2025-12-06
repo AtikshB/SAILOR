@@ -21,7 +21,7 @@ defaults:
   viz_expert_buffer: False
   update_dp: False
   train_dp_mppi: False
-  state_only: False
+  state_only: True
   generate_highres_eval: False
 
   # Data params
@@ -29,7 +29,7 @@ defaults:
   num_exp_val_trajs: 1
   normalize_state_actions: False
   image_size: 64
-  obs_horizon: 2 # Number of observations to stack
+  obs_horizon: 1 # Number of observations to stack
   action_horizon: 1 # Number of actions to take
   pred_horizon: 8 # Number of actions to stack
   num_buffer_transitions: 100000
@@ -190,16 +190,18 @@ robocasa:
     eval_freq: 12000
 
   env_max_steps:
-    { 
+    {
       stack: 3e5, door: 1e5, bread: 3e5,
-      cereal: 5e5, nutassemblyround: 5e5, 
-      breadcanfixed: 5e5, breadcanrandom: 5e5, 
+      cereal: 5e5, nutassemblyround: 5e5,
+      breadcanfixed: 5e5, breadcanrandom: 5e5,
+      closedrawer: 3e5,
     }
 
   env_time_limits:
     {stack: 150, door: 200, bread: 200,
     cereal: 150, nutassemblyround: 300,
-    breadcanfixed: 400, breadcanrandom: 400}
+    breadcanfixed: 400, breadcanrandom: 400,
+    closedrawer: 200}
 
 maniskill:
   action_repeat: 2

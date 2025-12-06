@@ -11,3 +11,7 @@ datasets/robomimic_datasets**
 datasets/robocasa_datasets**
 
 demos/**
+
+# Dependencies
+robocasa/
+robosuite/

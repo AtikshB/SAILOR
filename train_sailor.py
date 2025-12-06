@@ -105,8 +105,8 @@ def train_eval(config):
         )
         for id, key in enumerate(expert_eps.keys()):
             frame_successes = np.array(expert_eps[key]["success"]).ravel()
-            agent_frames = np.array(expert_eps[key]["agentview_image"])[..., -1]
-            robot_frames = np.array(expert_eps[key]["robot0_eye_in_hand_image"])[
+            agent_frames = np.array(expert_eps[key]["agentview"])[..., -1]
+            robot_frames = np.array(expert_eps[key]["robot0_eye_in_right_hand_image"])[
                 ..., -1
             ]
             save_demo_videos(

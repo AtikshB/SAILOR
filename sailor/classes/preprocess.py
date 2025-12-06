@@ -6,7 +6,7 @@ from sailor.diffusion.data4robotics import transforms
 
 
 class Preprocessor:
-    DATA_KEYS = ["agentview_image", "state", "robot0_eye_in_hand_image", "action"]
+    DATA_KEYS = ["agentview_image", "state", "robot0_eye_in_right_hand_image", "action"]
 
     def __init__(self, config):
         self.config = config
@@ -16,7 +16,7 @@ class Preprocessor:
 
         if self.config.dp["num_cams"] == 1:
             self.DATA_KEYS = [
-                key for key in self.DATA_KEYS if key != "robot0_eye_in_hand_image"
+                key for key in self.DATA_KEYS if key != "robot0_eye_in_right_hand_image"
             ]
 
         if config.state_only:
@@ -71,25 +71,25 @@ class Preprocessor:
             batch["agentview_image"] = self.convert_hwc_to_chw_224(
                 batch["agentview_image"]
             )
-            if "robot0_eye_in_hand_image" in batch:
-                batch["robot0_eye_in_hand_image"] = self.convert_hwc_to_chw_224(
-                    batch["robot0_eye_in_hand_image"]
+            if "robot0_eye_in_right_hand_image" in batch:
+                batch["robot0_eye_in_right_hand_image"] = self.convert_hwc_to_chw_224(
+                    batch["robot0_eye_in_right_hand_image"]
                 )
 
             # Apply GPU Transform to images if training
             if training:
                 batch["agentview_image"] = self.gpu_transform(batch["agentview_image"])
-                if "robot0_eye_in_hand_image" in batch:
-                    batch["robot0_eye_in_hand_image"] = self.gpu_transform(
-                        batch["robot0_eye_in_hand_image"]
+                if "robot0_eye_in_right_hand_image" in batch:
+                    batch["robot0_eye_in_right_hand_image"] = self.gpu_transform(
+                        batch["robot0_eye_in_right_hand_image"]
                     )
             else:
                 batch["agentview_image"] = self.inference_transform(
                     batch["agentview_image"]
                 )
-                if "robot0_eye_in_hand_image" in batch:
-                    batch["robot0_eye_in_hand_image"] = self.inference_transform(
-                        batch["robot0_eye_in_hand_image"]
+                if "robot0_eye_in_right_hand_image" in batch:
+                    batch["robot0_eye_in_right_hand_image"] = self.inference_transform(
+                        batch["robot0_eye_in_right_hand_image"]
                     )
 
         return batch
@@ -142,13 +142,13 @@ class Preprocessor:
         #     assert batch[key].shape[2] == 2, f"Shape: {key} - {batch[key].shape}"
 
         s = {
-            "cam0": batch["robot0_eye_in_hand_image"][:, 1, 0, ...],
+            "cam0": batch["robot0_eye_in_right_hand_image"][:, 1, 0, ...],
             "cam1": batch["agentview_image"][:, 1, 0, ...],
         }
 
         a = batch["action"][:, 0, 0, ...]
         s_next = {
-            "cam0": batch["robot0_eye_in_hand_image"][:, 1, 1, ...],
+            "cam0": batch["robot0_eye_in_right_hand_image"][:, 1, 1, ...],
             "cam1": batch["agentview_image"][:, 1, 1, ...],
         }
 
@@ -170,10 +170,10 @@ class Preprocessor:
 
         # Rename the images
         if not self.config.state_only:
-            if "robot0_eye_in_hand_image" in batch:
+            if "robot0_eye_in_right_hand_image" in batch:
                 imgs = {
                     "cam0": batch["agentview_image"],
-                    "cam1": batch["robot0_eye_in_hand_image"],
+                    "cam1": batch["robot0_eye_in_right_hand_image"],
                 }
             else:
                 imgs = {

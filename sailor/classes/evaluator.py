@@ -112,9 +112,9 @@ class ModelEvaluator:
                     step_obs[image_key] = step_obs[image_key].cpu().numpy()
 
                 eye_in_hand_key = (
-                    "robot0_eye_in_hand_image_highres"
-                    if "robot0_eye_in_hand_image_highres" in step_obs
-                    else "robot0_eye_in_hand_image"
+                    "robot0_eye_in_right_hand_image_highres"
+                    if "robot0_eye_in_right_hand_image_highres" in step_obs
+                    else "robot0_eye_in_right_hand_image"
                 )
                 if isinstance(step_obs[eye_in_hand_key], torch.Tensor):
                     step_obs[eye_in_hand_key] = step_obs[eye_in_hand_key].cpu().numpy()

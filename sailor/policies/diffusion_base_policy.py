@@ -21,7 +21,7 @@ from sailor.dreamer import tools
 
 
 class WeigtedActionWrapper:
-    IMAGE_KEYS = ["agentview_image", "robot0_eye_in_hand_image"]
+    IMAGE_KEYS = ["agentview_image", "robot0_eye_in_right_hand_image"]
 
     def __init__(self, agent, config, preprocessor: Preprocessor, EXP_WEIGHT=0.0):
         self.config = config
@@ -86,10 +86,10 @@ class WeigtedActionWrapper:
         obs = self.preprocessor.preprocess_batch(obs, training=False)
 
         if not self.config.state_only:
-            if "robot0_eye_in_hand_image" in obs.keys():
+            if "robot0_eye_in_right_hand_image" in obs.keys():
                 images = {
                     "cam0": obs["agentview_image"],
-                    "cam1": obs["robot0_eye_in_hand_image"],
+                    "cam1": obs["robot0_eye_in_right_hand_image"],
                 }
             else:
                 images = {"cam0": obs["agentview_image"]}

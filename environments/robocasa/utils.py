@@ -9,6 +9,7 @@ import robocasa.utils.robomimic.robomimic_dataset_utils as DatasetUtils
 import robocasa.utils.robomimic.robomimic_env_utils as EnvUtils
 from environments.robocasa.additional_envs import *
 from environments.robocasa.robocasa_wrapper import RoboCasaWrapper
+from environments.robocasa.robocasa_wrapper_gr1 import RoboCasaWrapperGR1
 from environments.robomimic.utils import add_traj_to_cache, create_shape_meta
 from sailor.dreamer.tools import set_seed_everywhere
 
@@ -27,10 +28,59 @@ def sanitize_for_robomimic(config):
     return config
 
 
+def create_shape_meta_from_dataset(dataset_path, img_size):
+    """
+    Dynamically create shape_meta by reading observation keys from HDF5 dataset.
+    This supports both single-arm and dual-arm robots (like GR1ArmsOnly).
+    """
+    shape_meta = {"obs": {}, "action": {}}
+
+    # Open dataset and get first demo to inspect observation structure
+    with h5py.File(dataset_path, "r") as f:
+        demos = list(f["data"].keys())
+        if len(demos) == 0:
+            raise ValueError(f"No demonstrations found in dataset: {dataset_path}")
+
+        first_demo = demos[0]
+        obs_group = f[f"data/{first_demo}/obs"]
+
+        # Iterate through all observation keys and add to shape_meta
+        for obs_key in obs_group.keys():
+            obs_data = obs_group[obs_key]
+            obs_shape = obs_data.shape[1:]  # Remove time dimension
+
+            if "image" in obs_key:
+                # Image observations
+                shape_meta["obs"][obs_key] = {
+                    "shape": list(obs_shape),
+                    "type": "rgb",
+                }
+            else:
+                # Low-dimensional state observations
+                shape_meta["obs"][obs_key] = {
+                    "shape": list(obs_shape),
+                    "type": "low_dim",
+                }
+
+        # Get action dimension
+        actions = f[f"data/{first_demo}/actions"]
+        action_dim = actions.shape[1]
+        shape_meta["action"] = {"shape": [action_dim]}
+
+    cprint(f"Dynamically created shape_meta with {len(shape_meta['obs'])} observation keys", "green")
+    return shape_meta
+
+
 def get_env_details(config, suite, task):
-    # image_64_shaped_done1_v141.hdf5
+    # Try versioned filename first (image_64_shaped_done1_v141.hdf5)
     hdf5_name = f"image_{config.image_size}_shaped_done1_v141.hdf5"
     dataset_path = os.path.join(config.datadir, task.lower(), hdf5_name)
+
+    # If not found, try non-versioned filename (image_64_shaped_done1.hdf5)
+    if not os.path.exists(dataset_path):
+        hdf5_name = f"image_{config.image_size}_shaped_done1.hdf5"
+        dataset_path = os.path.join(config.datadir, task.lower(), hdf5_name)
+
     if not os.path.exists(dataset_path):
         raise FileNotFoundError(f"Dataset not found at {dataset_path}")
     env_meta = DatasetUtils.get_env_metadata_from_dataset(dataset_path=dataset_path)
@@ -38,9 +88,10 @@ def get_env_details(config, suite, task):
     if task.lower() in ["stack", "door"]:
         env_meta["env_kwargs"] = sanitize_for_robomimic(env_meta["env_kwargs"])
 
-    shape_meta = create_shape_meta(
+    # Dynamically create shape_meta from actual dataset observations
+    shape_meta = create_shape_meta_from_dataset(
+        dataset_path=dataset_path,
         img_size=config.image_size,
-        include_state=True,
     )
     return dataset_path, env_meta, shape_meta
 
@@ -58,18 +109,30 @@ def make_env_robocasa(config, suite, task):
     env_meta["env_kwargs"]["lite_physics"] = False
 
     set_seed_everywhere(config.seed)
+
+    # Check if GR1ArmsOnly robot from env_meta
+    is_gr1 = env_meta["env_kwargs"]["robots"][0] == "GR1ArmsOnly"
+
+    if is_gr1:
+        camera_names = ["agentview", "robot0_eye_in_right_hand", "robot0_eye_in_left_hand"]
+        wrapper_cls = RoboCasaWrapperGR1
+    else:
+        camera_names = ["agentview", "robot0_eye_in_hand"]
+        wrapper_cls = RoboCasaWrapper
+
     env = EnvUtils.create_env_for_data_processing(
         env_meta=env_meta,
-        camera_names=["agentview", "robot0_eye_in_hand"],
+        camera_names=camera_names,
         camera_height=camera_shape,
         camera_width=camera_shape,
         reward_shaping=True,
     )
     cprint(
-        f"Initialized robocasa env with action repeat: {config.action_repeat}, time limit: {config.time_limit}",
+        f"Initialized robocasa env with robot {env_meta['env_kwargs']['robots'][0]}, "
+        f"action repeat: {config.action_repeat}, time limit: {config.time_limit}",
         "yellow",
     )
-    return RoboCasaWrapper(
+    return wrapper_cls(
         env=env,
         shape_meta=shape_meta,
         config=config,
@@ -164,11 +227,45 @@ def get_train_val_datasets(config):
     pixel_keys = sorted([key for key in obs_keys if "image" in key])
     state_keys = sorted([key for key in obs_keys if "image" not in key])
 
+    # Check if we should exclude joint_pos_cos and joint_pos_sin
+    # (matching the logic in RoboCasaWrapperGR1)
+    has_joint_cos = any("joint_pos_cos" in key for key in state_keys)
+    has_joint_sin = any("joint_pos_sin" in key for key in state_keys)
+    convert_joint_pos = has_joint_cos and has_joint_sin
+
+    # Transform the data to add computed joint_qpos (matching wrapper behavior)
+    if convert_joint_pos:
+        # Find the cos/sin keys
+        cos_key = [k for k in state_keys if "joint_pos_cos" in k][0]
+        sin_key = [k for k in state_keys if "joint_pos_sin" in k][0]
+        # Compute the joint_qpos key name (remove _cos suffix from the cos key and add _qpos)
+        joint_qpos_key = cos_key.replace("_cos", "_qpos")
+
+        # Add computed joint_qpos to each demo
+        for demo_name in clean_demos:
+            cos_data = new_data_dict["data"][demo_name]["obs"][cos_key]
+            sin_data = new_data_dict["data"][demo_name]["obs"][sin_key]
+            joint_qpos = np.arctan2(sin_data, cos_data)
+            new_data_dict["data"][demo_name]["obs"][joint_qpos_key] = joint_qpos
+
     # Initialize norm_dict
     # Read ob_dim and ac_dim from the first datapoint in the first demo
     first_demo = new_data_dict["data"][clean_demos[0]]
+
+    # Filter state_keys to exclude cos/sin and add computed qpos if both are present
+    if convert_joint_pos:
+        filtered_state_keys = [
+            key for key in state_keys
+            if not ("joint_pos_cos" in key or "joint_pos_sin" in key)
+        ]
+        # Add the computed joint_qpos key
+        filtered_state_keys.append(joint_qpos_key)
+        filtered_state_keys = sorted(filtered_state_keys)  # Keep sorted
+    else:
+        filtered_state_keys = state_keys
+
     ob_dim = 0
-    for key in state_keys:
+    for key in filtered_state_keys:
         ob_dim += np.prod(first_demo["obs"][key].shape[1:])
     ac_dim = first_demo["actions"].shape[1]
 
@@ -180,10 +277,8 @@ def get_train_val_datasets(config):
         "ac_min": np.inf * np.ones(ac_dim, dtype=np.float32),
     }
 
-    # Set state_dim and action_dim
-    state_dim = 0
-    for key in state_keys:
-        state_dim += np.prod(first_demo["obs"][key].shape[1:])
+    # Set state_dim and action_dim (using same logic as ob_dim above)
+    state_dim = ob_dim
 
     action_dim = first_demo["actions"].shape[1]
 
@@ -197,7 +292,7 @@ def get_train_val_datasets(config):
             new_data_dict,
             config,
             pixel_keys,
-            state_keys,
+            filtered_state_keys,
             norm_dict,
         )
 
@@ -222,7 +317,7 @@ def get_train_val_datasets(config):
     for ii in range(num_train_trajs, num_train_trajs + num_val_trajs):
         demo = clean_demos[ii]
         add_traj_to_cache(
-            ii, demo, val_eps, new_data_dict, config, pixel_keys, state_keys
+            ii, demo, val_eps, new_data_dict, config, pixel_keys, filtered_state_keys
         )
     print(
         "Loaded",
