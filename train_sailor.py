@@ -89,6 +89,10 @@ def train_eval(config):
         expert_eps, expert_val_eps, _, state_dim, action_dim = (
             get_train_val_datasets_maniskill(config)
         )
+    elif suite in ("humanoid-bench", "humanoid_bench", "humanoid"):
+        from environments.humanoid_bench.utils import get_train_val_datasets
+
+        expert_eps, expert_val_eps, _, state_dim, action_dim = get_train_val_datasets(config)
     else:
         raise ValueError(f"Unknown env suite {suite}")
 
@@ -131,6 +135,8 @@ def train_eval(config):
             )
         else:
             envs = make_env(config)
+    elif suite in ("humanoid-bench", "humanoid_bench", "humanoid"):
+        envs = make_env(config)
 
     acts = envs.action_space
     print(f"Action Space: {acts}. Low: {acts.low}. High: {acts.high}")
@@ -282,6 +288,14 @@ def make_env(config):
         env = make_maniskill_env(config, suite=suite, task=task)
         env = wrappers.UUID(env)
 
+    elif suite in ("humanoid-bench", "humanoid_bench", "humanoid"):
+        from environments.humanoid_bench.utils import make_env_humanoid, get_train_val_datasets
+
+        env = make_env_humanoid(config=config, suite=suite, task=task)
+        env = wrappers.TimeLimit(env, duration=config.time_limit)
+        env = wrappers.SelectAction(env, key="action")
+        env = wrappers.UUID(env)
+
     else:
         raise ValueError(f"Unknown env suite {suite}")
 
@@ -386,6 +400,9 @@ if __name__ == "__main__":
         final_config.time_limit = final_config.env_time_limits[task]
 
     elif suite == "maniskill":
+        final_config.time_limit = final_config.env_time_limits[task]
+
+    elif suite in ("humanoid-bench", "humanoid_bench", "humanoid"):
         final_config.time_limit = final_config.env_time_limits[task]
 
     else:

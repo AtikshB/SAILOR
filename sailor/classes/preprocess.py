@@ -26,12 +26,22 @@ class Preprocessor:
     @staticmethod
     def convert_hwc_to_chw_224(img):
         """
-        Input can be B x H x W x C or B x T x H x W x C
+        Input can be B x H x W x C or B x T x H x W x C or B x C x H x W or B x T x C x H x W
         Output will be B x C x H x W or B x T x C x H x W
         Resize to 224 if H, W are not 224
         """
         assert len(img.shape) in [4, 5], f"Invalid shape: {img.shape}"
-        img = rearrange(img, "... h w c -> ... c h w")
+        
+        # Check if already in CHW format (channel dim should be 3 or 4, spatial dims should be larger)
+        # For 4D: B x C x H x W, channel is at index 1
+        # For 5D: B x T x C x H x W, channel is at index 2
+        if len(img.shape) == 4:
+            is_chw = img.shape[1] in [3, 4] and img.shape[1] < img.shape[2]
+        else:  # 5D
+            is_chw = img.shape[2] in [3, 4] and img.shape[2] < img.shape[3]
+        
+        if not is_chw:
+            img = rearrange(img, "... h w c -> ... c h w")
 
         if img.shape[-1] != 224:
             # Resize each image to 224
@@ -181,7 +191,6 @@ class Preprocessor:
                 }
         else:
             imgs = None
-
         obs = batch["state"][:, -1, :].to(torch.float32)  # Take the last state
         actions = batch["action"].to(torch.float32)
         mask = torch.ones_like(actions).to(torch.float32)  # No mask for now

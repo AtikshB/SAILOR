@@ -1,7 +1,7 @@
 defaults:  
   # Directory Configs
   scratch_dir: "scratch_dir/"
-  datadir: null # Set automatically using the suite
+  datadir: demos/reach_two_hands_absolute # Set automatically using the suite
 
   # General Configs
   seed: 0
@@ -13,8 +13,8 @@ defaults:
 
   # Wandb configs
   use_wandb: True
-  wandb_entity: 'scaling-rl' # Top level name
-  wandb_project: null
+  wandb_entity: 'ab2635' # Top level name
+  wandb_project: sailor_humanoidbench
   wandb_exp_name: null
 
   # Run Params
@@ -28,7 +28,7 @@ defaults:
   num_exp_trajs: -1 # To be specified when starting a new run
   num_exp_val_trajs: 1
   normalize_state_actions: False
-  image_size: 64
+  image_size: 84
   obs_horizon: 2 # Number of observations to stack
   action_horizon: 1 # Number of actions to take
   pred_horizon: 8 # Number of actions to stack
@@ -215,6 +215,20 @@ maniskill:
     {pullcube: 1e5, liftpeg: 3e5, pokecube: 3e5}
   env_time_limits:
     {pullcube: 50, liftpeg: 150, pokecube: 100}
+
+humanoid-bench:
+  action_repeat: 1
+  image_size: 84
+
+  dp:
+    shared_mlp: []
+    train_steps: 24000
+    eval_freq: 12000
+
+  env_max_steps:
+    {h1hand_pos_reach: 3e5}
+  env_time_limits:
+    {h1hand_pos_reach: 200}
 
 # Top Level Options
 # Train DP
