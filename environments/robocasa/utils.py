@@ -35,6 +35,10 @@ def create_shape_meta_from_dataset(dataset_path, img_size):
     """
     shape_meta = {"obs": {}, "action": {}}
 
+    # Keys that exist in the dataset but are not provided by the live environment
+    # These are typically derivative quantities (velocity, acceleration)
+    EXCLUDED_KEYS = ["robot0_joint_vel", "robot0_joint_acc", "robot0_left_gripper_qvel", "robot0_right_gripper_qvel"]
+
     # Open dataset and get first demo to inspect observation structure
     with h5py.File(dataset_path, "r") as f:
         demos = list(f["data"].keys())
@@ -46,6 +50,10 @@ def create_shape_meta_from_dataset(dataset_path, img_size):
 
         # Iterate through all observation keys and add to shape_meta
         for obs_key in obs_group.keys():
+            # Skip keys that don't exist in live environment
+            if obs_key in EXCLUDED_KEYS:
+                continue
+
             obs_data = obs_group[obs_key]
             obs_shape = obs_data.shape[1:]  # Remove time dimension
 
@@ -110,8 +118,8 @@ def make_env_robocasa(config, suite, task):
 
     set_seed_everywhere(config.seed)
 
-    # Check if GR1ArmsOnly robot from env_meta
-    is_gr1 = env_meta["env_kwargs"]["robots"][0] == "GR1ArmsOnly"
+    # Check if GR1 robot from env_meta
+    is_gr1 = env_meta["env_kwargs"]["robots"][0] == "GR1FixedLowerBody" or env_meta["env_kwargs"]["robots"][0] == "GR1ArmsOnly"
 
     if is_gr1:
         camera_names = ["agentview", "robot0_eye_in_right_hand", "robot0_eye_in_left_hand"]

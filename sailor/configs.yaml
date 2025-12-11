@@ -195,13 +195,15 @@ robocasa:
       cereal: 5e5, nutassemblyround: 5e5,
       breadcanfixed: 5e5, breadcanrandom: 5e5,
       closedrawer: 3e5,
+      pickplacecan: 5e5
     }
 
   env_time_limits:
     {stack: 150, door: 200, bread: 200,
     cereal: 150, nutassemblyround: 300,
     breadcanfixed: 400, breadcanrandom: 400,
-    closedrawer: 200}
+    closedrawer: 200,
+    pickplacecan: 400}
 
 maniskill:
   action_repeat: 2
