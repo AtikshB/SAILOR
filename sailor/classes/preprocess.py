@@ -6,7 +6,7 @@ from sailor.diffusion.data4robotics import transforms
 
 
 class Preprocessor:
-    DATA_KEYS = ["agentview_image", "state", "robot0_eye_in_right_hand_image", "action"]
+    DATA_KEYS = ["agentview_image", "state", "robot0_eye_in_right_hand_image", "robot0_eye_in_left_hand_image", "action"]
 
     def __init__(self, config):
         self.config = config
@@ -14,10 +14,11 @@ class Preprocessor:
         self.gpu_transform = transforms.get_gpu_transform_by_name("gpu_medium")
         self.inference_transform = transforms.get_transform_by_name("preproc")
 
+        # Filter DATA_KEYS based on num_cams
         if self.config.dp["num_cams"] == 1:
-            self.DATA_KEYS = [
-                key for key in self.DATA_KEYS if key != "robot0_eye_in_right_hand_image"
-            ]
+            self.DATA_KEYS = [key for key in self.DATA_KEYS if "eye_in" not in key]
+        elif self.config.dp["num_cams"] == 2:
+            self.DATA_KEYS = [key for key in self.DATA_KEYS if key != "robot0_eye_in_left_hand_image"]
 
         if config.state_only:
             # Remove all in DATA_KEYS that contains "image"
@@ -68,29 +69,18 @@ class Preprocessor:
 
         # Make images from (H, W, C) to (C, H, W) and resize to 224
         if not self.config.state_only:
-            batch["agentview_image"] = self.convert_hwc_to_chw_224(
-                batch["agentview_image"]
-            )
-            if "robot0_eye_in_right_hand_image" in batch:
-                batch["robot0_eye_in_right_hand_image"] = self.convert_hwc_to_chw_224(
-                    batch["robot0_eye_in_right_hand_image"]
-                )
+            # Process all image keys dynamically
+            image_keys = [k for k in batch.keys() if "image" in k]
+            for img_key in image_keys:
+                batch[img_key] = self.convert_hwc_to_chw_224(batch[img_key])
 
             # Apply GPU Transform to images if training
             if training:
-                batch["agentview_image"] = self.gpu_transform(batch["agentview_image"])
-                if "robot0_eye_in_right_hand_image" in batch:
-                    batch["robot0_eye_in_right_hand_image"] = self.gpu_transform(
-                        batch["robot0_eye_in_right_hand_image"]
-                    )
+                for img_key in image_keys:
+                    batch[img_key] = self.gpu_transform(batch[img_key])
             else:
-                batch["agentview_image"] = self.inference_transform(
-                    batch["agentview_image"]
-                )
-                if "robot0_eye_in_right_hand_image" in batch:
-                    batch["robot0_eye_in_right_hand_image"] = self.inference_transform(
-                        batch["robot0_eye_in_right_hand_image"]
-                    )
+                for img_key in image_keys:
+                    batch[img_key] = self.inference_transform(batch[img_key])
 
         return batch
 
@@ -141,16 +131,17 @@ class Preprocessor:
         #     assert batch[key].shape[1] == 2, f"Shape: {key} - {batch[key].shape}"
         #     assert batch[key].shape[2] == 2, f"Shape: {key} - {batch[key].shape}"
 
-        s = {
-            "cam0": batch["robot0_eye_in_right_hand_image"][:, 1, 0, ...],
-            "cam1": batch["agentview_image"][:, 1, 0, ...],
-        }
+        # Build camera dicts dynamically based on available images
+        s = {}
+        s_next = {}
+        cam_idx = 0
+        image_keys = [k for k in batch.keys() if "image" in k]
+        for img_key in image_keys:
+            s[f"cam{cam_idx}"] = batch[img_key][:, 1, 0, ...]
+            s_next[f"cam{cam_idx}"] = batch[img_key][:, 1, 1, ...]
+            cam_idx += 1
 
         a = batch["action"][:, 0, 0, ...]
-        s_next = {
-            "cam0": batch["robot0_eye_in_right_hand_image"][:, 1, 1, ...],
-            "cam1": batch["agentview_image"][:, 1, 1, ...],
-        }
 
         s_priv = batch["privileged_state"][:, 0, ...]
         return s, a.to(torch.float32), s_next, s_priv.to(torch.float32)
@@ -168,17 +159,14 @@ class Preprocessor:
 
         batch = self.preprocess_batch(batch, training=training)
 
-        # Rename the images
+        # Build images dict dynamically based on available cameras
         if not self.config.state_only:
-            if "robot0_eye_in_right_hand_image" in batch:
-                imgs = {
-                    "cam0": batch["agentview_image"],
-                    "cam1": batch["robot0_eye_in_right_hand_image"],
-                }
-            else:
-                imgs = {
-                    "cam0": batch["agentview_image"],
-                }
+            imgs = {}
+            cam_idx = 0
+            image_keys = [k for k in batch.keys() if "image" in k]
+            for img_key in image_keys:
+                imgs[f"cam{cam_idx}"] = batch[img_key]
+                cam_idx += 1
         else:
             imgs = None
 

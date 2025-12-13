@@ -37,9 +37,9 @@ defaults:
   action_dim: -1 # To be set when loading expert data
 
   # Evaluation
-  eval_num_runs: 50
+  eval_num_runs: 20
   visualize_eval: True # Store videos of all eval runs
-  log_every: 50
+  log_every: 20
 
   # Environment
   task: null
@@ -94,7 +94,7 @@ defaults:
 
   # DP Config
   dp:
-    train_steps: 1000000
+    train_steps: 200
     batch_size: 256
     lr: 0.0001
     max_iterations: 500000
@@ -107,7 +107,7 @@ defaults:
     action_space: 'deltas'
     ac_chunk: 8
     img_chunk: 2
-    num_cams: 2
+    num_cams: 3  # GR1 robots have 3 cameras (agentview, right_hand, left_hand)
     train_transform: 'gpu_medium'
     debug: False
     print_config: False
@@ -147,7 +147,7 @@ defaults:
     # Training Itrs
     n_env_steps: null # Large number, to be set by specific env configs
     min_env_steps_per_round: 3500
-    rounds_train_ratio: 1.5
+    rounds_train_ratio: 0.1
 
     # Data collection
     data_collect_noise_std: 0.1

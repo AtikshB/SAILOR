@@ -21,7 +21,7 @@ from sailor.dreamer import tools
 
 
 class WeigtedActionWrapper:
-    IMAGE_KEYS = ["agentview_image", "robot0_eye_in_right_hand_image"]
+    IMAGE_KEYS = ["agentview_image", "robot0_eye_in_right_hand_image", "robot0_eye_in_left_hand_image"]
 
     def __init__(self, agent, config, preprocessor: Preprocessor, EXP_WEIGHT=0.0):
         self.config = config
@@ -32,8 +32,13 @@ class WeigtedActionWrapper:
         self.obs_horizon = config.obs_horizon
         self.preprocessor = preprocessor
 
+        # Set IMAGE_KEYS based on num_cams config
         if config.dp["num_cams"] == 1:
             self.IMAGE_KEYS = ["agentview_image"]
+        elif config.dp["num_cams"] == 2:
+            self.IMAGE_KEYS = ["agentview_image", "robot0_eye_in_right_hand_image"]
+        elif config.dp["num_cams"] == 3:
+            self.IMAGE_KEYS = ["agentview_image", "robot0_eye_in_right_hand_image", "robot0_eye_in_left_hand_image"]
 
         self.agent = agent
         self.transform = transforms.get_transform_by_name("preproc")
@@ -86,13 +91,13 @@ class WeigtedActionWrapper:
         obs = self.preprocessor.preprocess_batch(obs, training=False)
 
         if not self.config.state_only:
-            if "robot0_eye_in_right_hand_image" in obs.keys():
-                images = {
-                    "cam0": obs["agentview_image"],
-                    "cam1": obs["robot0_eye_in_right_hand_image"],
-                }
-            else:
-                images = {"cam0": obs["agentview_image"]}
+            # Build images dict dynamically based on available cameras
+            images = {}
+            cam_idx = 0
+            for key in self.IMAGE_KEYS:
+                if key in obs.keys():
+                    images[f"cam{cam_idx}"] = obs[key]
+                    cam_idx += 1
         else:
             images = None
 

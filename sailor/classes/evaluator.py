@@ -66,8 +66,8 @@ class ModelEvaluator:
         length_episodes = np.zeros(num_envs)
 
         dones = np.zeros(num_envs, dtype=bool)
-        image_frames = []
-        handcam_frames = []
+        # Store frames for all available cameras dynamically
+        all_camera_frames = {}  # Will be populated with keys like "agentview_image", "robot0_eye_in_right_hand_image", etc.
         success_frames = []
         step_rewards_seed = {
             "gt_reward": [],
@@ -102,25 +102,29 @@ class ModelEvaluator:
             dones = np.logical_or(step_dones, successes)
 
             if self.visualize:
-                image_key = (
-                    "agentview_image_highres"
-                    if "agentview_image_highres" in step_obs
-                    else "agentview_image"
-                )
-                # Save convert to np array if its a tensor
-                if isinstance(step_obs[image_key], torch.Tensor):
-                    step_obs[image_key] = step_obs[image_key].cpu().numpy()
+                # Collect frames from all available cameras dynamically
+                camera_keys = [
+                    "agentview_image",
+                    "robot0_eye_in_right_hand_image",
+                    "robot0_eye_in_left_hand_image"
+                ]
 
-                eye_in_hand_key = (
-                    "robot0_eye_in_right_hand_image_highres"
-                    if "robot0_eye_in_right_hand_image_highres" in step_obs
-                    else "robot0_eye_in_right_hand_image"
-                )
-                if isinstance(step_obs[eye_in_hand_key], torch.Tensor):
-                    step_obs[eye_in_hand_key] = step_obs[eye_in_hand_key].cpu().numpy()
+                for cam_key in camera_keys:
+                    # Check both regular and highres versions
+                    highres_key = cam_key.replace("_image", "_image_highres")
+                    actual_key = highres_key if highres_key in step_obs else cam_key
 
-                image_frames.append(step_obs[image_key])
-                handcam_frames.append(step_obs[eye_in_hand_key])
+                    if actual_key in step_obs:
+                        # Initialize list for this camera if first time
+                        if actual_key not in all_camera_frames:
+                            all_camera_frames[actual_key] = []
+
+                        # Convert to numpy if tensor
+                        if isinstance(step_obs[actual_key], torch.Tensor):
+                            step_obs[actual_key] = step_obs[actual_key].cpu().numpy()
+
+                        all_camera_frames[actual_key].append(step_obs[actual_key])
+
                 success_frames.append(successes)
 
                 step_rewards_seed["gt_reward"].append(step_rewards)
@@ -141,7 +145,7 @@ class ModelEvaluator:
             average_total_reward,
             average_length_episode,
             average_total_orig_reward,
-            [image_frames, handcam_frames],
+            all_camera_frames,  # Dict of camera_key -> list of frames
             success_frames,
             step_rewards_seed,
         )
@@ -192,7 +196,6 @@ class ModelEvaluator:
                             end_index = len(seed_success_frames)
 
                         unit_eval_data = {
-                            "cam_0": np.array(seed_images[0])[:end_index, i, ...],
                             "gt_reward": np.array(step_rewards_seed["gt_reward"])[
                                 :end_index, i
                             ],
@@ -201,6 +204,9 @@ class ModelEvaluator:
                             )[:end_index, i],
                             "success": np.array(seed_success_frames)[:end_index, i],
                         }
+                        # Add all camera frames to the data dict
+                        for cam_idx, (cam_key, frames) in enumerate(seed_images.items()):
+                            unit_eval_data[f"cam_{cam_idx}"] = np.array(frames)[:end_index, i, ...]
 
                         # Save all_data_dict as a .npz file
                         np.savez(
@@ -213,10 +219,10 @@ class ModelEvaluator:
                             f"{self.parent_output_dir}/step_{self.step}/{unit_eval_key}.npz",
                         )
                 else:
-                    # Save videos of the rollouts
-                    for i, image_frame in enumerate(seed_images):
-                        video_path = f"{self.parent_output_dir}/step_{self.step}/seed_{seed}_cam_{i}_succ_{success_rate:.2f}_rew_{total_avg_reward:.2f}.mp4"
-                        self.save_video(image_frame, seed_success_frames, video_path)
+                    # Save videos of the rollouts for each camera
+                    for cam_idx, (cam_key, image_frames) in enumerate(seed_images.items()):
+                        video_path = f"{self.parent_output_dir}/step_{self.step}/seed_{seed}_cam_{cam_idx}_succ_{success_rate:.2f}_rew_{total_avg_reward:.2f}.mp4"
+                        self.save_video(image_frames, seed_success_frames, video_path)
 
         avg_success_rate = np.mean(success_rates)
         avg_total_avg_reward = np.mean(total_avg_rewards)

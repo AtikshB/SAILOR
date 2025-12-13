@@ -42,9 +42,10 @@ class RoboCasaWrapperGR1:
         # create action space
         self.n_succ_before_term = n_succ_before_term
         self.action_space = spaces.Box(
-            low=-1, high=1, shape=(config.action_dim,), dtype=np.float32
+            low=-3, high=3, shape=(config.action_dim,), dtype=np.float32
         )
         self.config = config
+        self.shape_meta = shape_meta
 
         # create observation space
         observation_space = spaces.Dict()
@@ -76,7 +77,8 @@ class RoboCasaWrapperGR1:
         # render_cache is used to store the last rendered image
         self.render_cache = None
         self.render_obs_key = keys[0]
-        self.state_keys = state_keys
+        # Sort state_keys to match dataset loading order
+        self.state_keys = sorted(state_keys)
         self.convert_joint_pos = has_joint_cos and has_joint_sin
         self.action_repeat = action_repeat
 
@@ -87,20 +89,39 @@ class RoboCasaWrapperGR1:
             if observation_space_key == "state":
                 # "state" only exists as key if self.add_state == True
                 state_obs = []
+
+                # Compute joint_qpos if needed
+                joint_qpos = None
                 if self.convert_joint_pos:
                     joint_qpos = np.arctan2(
                         raw_obs["robot0_joint_pos_sin"], raw_obs["robot0_joint_pos_cos"]
                     )
-                    state_obs.append(joint_qpos)
 
-                for state_key in self.state_keys:
-                    if not (
-                        self.convert_joint_pos
-                        and (
-                            "joint_pos_cos" in state_key or "joint_pos_sin" in state_key
-                        )
-                    ):
-                        state_obs.append(raw_obs[state_key])
+                # Build filtered and sorted state keys (matching dataset loader)
+                if self.convert_joint_pos:
+                    # Filter out cos/sin, add qpos key, and sort
+                    filtered_keys = [
+                        k for k in self.state_keys
+                        if not ("joint_pos_cos" in k or "joint_pos_sin" in k)
+                    ]
+                    filtered_keys.append("robot0_joint_pos_qpos")
+                    filtered_keys = sorted(filtered_keys)
+                else:
+                    filtered_keys = self.state_keys
+
+                # Build state vector in sorted key order
+                for state_key in filtered_keys:
+                    if state_key == "robot0_joint_pos_qpos":
+                        state_obs.append(joint_qpos)
+                    else:
+                        obs_value = raw_obs[state_key]
+                        # Get expected shape from shape_meta if available
+                        if state_key in self.shape_meta["obs"]:
+                            expected_shape = self.shape_meta["obs"][state_key]["shape"]
+                            # Truncate if live env provides more dimensions than dataset
+                            if len(obs_value.shape) > 0 and obs_value.shape[0] > expected_shape[0]:
+                                obs_value = obs_value[:expected_shape[0]]
+                        state_obs.append(obs_value)
 
                 obs[observation_space_key] = np.concatenate(state_obs, axis=0)
             else:
