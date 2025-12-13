@@ -23,6 +23,9 @@ import time
 import numpy as np
 from termcolor import cprint
 
+# Set up headless rendering before any MuJoCo imports
+os.environ.setdefault('MUJOCO_GL', 'egl')
+
 from environments.humanoid_bench.humanoid_wrapper import HumanoidBenchWrapper
 from environments.humanoid_bench.constants import IMAGE_OBS_KEYS
 from sailor.classes.rollout_utils import get_act_stacked, get_obs_stacked
@@ -49,7 +52,6 @@ def make_env_humanoid(config, suite, task, **env_kwargs):
         from humanoid_bench.env import HumanoidEnv
     except Exception as e:
         raise ImportError("Could not import humanoid_bench. Ensure it's installed or on PYTHONPATH.") from e
-
     robot, control, taskname = _parse_task_string(task)
 
     kwargs = dict(
@@ -59,8 +61,8 @@ def make_env_humanoid(config, suite, task, **env_kwargs):
         render_mode="rgb_array",
         width=int(getattr(config, "image_size", 84)),
         height=int(getattr(config, "image_size", 84)),
-        obs_wrapper="True",
-        sensors="image,proprio",
+        obs_wrapper="True",  # Enable obs wrapper to get dict with images
+        sensors="image",  # This will trigger camera observations (left_eye_camera, right_eye_camera)
     )
     # user-supplied env kwargs override defaults
     kwargs.update(env_kwargs)
@@ -150,7 +152,6 @@ def collect_with_bundled_policy(config, outdir: str, num_episodes: int = 10, max
     cprint(f"Using bundled policy at {policy_path}", "yellow")
 
     env = make_env_humanoid(config, suite, task, policy_path=policy_path, mean_path=mean_path, var_path=var_path, policy_type=policy_type)
-
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     traj_lengths = []
@@ -171,7 +172,9 @@ def collect_with_bundled_policy(config, outdir: str, num_episodes: int = 10, max
         rewards = []
         dones = []
 
+        cprint(f"Starting episode {ep+1}/{num_episodes}...", "yellow")
         raw = env.reset()
+        print("Env reset done.")
         raw_obs = raw[0] if isinstance(raw, tuple) and len(raw) >= 1 else raw
 
         for t in range(int(max_steps)):
@@ -198,6 +201,10 @@ def collect_with_bundled_policy(config, outdir: str, num_episodes: int = 10, max
             actions.append(np.asarray(action, dtype=np.float32))
             rewards.append(float(rew))
             dones.append(bool(done))
+            
+            # Progress indicator every 100 steps
+            if (t + 1) % 100 == 0:
+                print(f"  Step {t+1}/{max_steps}...", end='\r', flush=True)
 
             if done:
                 break
@@ -212,7 +219,8 @@ def collect_with_bundled_policy(config, outdir: str, num_episodes: int = 10, max
         grp.create_dataset("obs", data=obs_bytes, compression="gzip")
 
         traj_lengths.append(len(rewards))
-        cprint(f"Saved rollout ep_{ep:05d} to HDF5 (len={len(rewards)})", "cyan")
+        total_reward = sum(rewards)
+        cprint(f"✓ Episode {ep+1}/{num_episodes} complete: {len(rewards)} steps, total reward: {total_reward:.2f}", "green")
         # brief pause to let mujoco release resources between resets if needed
         time.sleep(0.1)
 
@@ -320,25 +328,17 @@ def get_train_val_datasets(config):
     except Exception:
         raise ValueError("config.task must be of form 'humanoid-bench__<robot>_<control>_<task>'")
 
-    # create a sample env to infer dims
-    env = make_env_humanoid(config=config, suite=suite, task=task)
-
+    # We'll infer state_dim and action_dim from the actual loaded data, not from a fresh env
     state_dim = 0
-    if hasattr(env, "observation_space") and getattr(env.observation_space, "spaces", None) and "state" in env.observation_space.spaces:
-        state_dim = int(np.prod(env.observation_space.spaces["state"].shape))
-    else:
-        try:
-            sample = env.reset()
-            if isinstance(sample, dict) and "state" in sample:
-                state_dim = int(np.prod(sample["state"].shape))
-        except Exception:
-            state_dim = 0
-
-    action_dim = env.action_space.shape[0] if hasattr(env.action_space, "shape") else 0
+    action_dim = 0
 
     # If user asked to collect demos and bundled policy exists, collect them
     collect_flag = bool(getattr(config, "collect_demo", False))
     if collect_flag:
+        # create a sample env for collection
+        env = make_env_humanoid(config=config, suite=suite, task=task)
+        action_dim = env.action_space.shape[0] if hasattr(env.action_space, "shape") else 0
+        
         # where to write demos
         outdir = getattr(config, "demo_outdir", "demos/humanoid")
         policy_type = getattr(config, "policy_type", None)
@@ -403,20 +403,24 @@ def get_train_val_datasets(config):
                 elif "cam1" in obs_arrays:
                     traj_dict["robot0_eye_in_hand_image"] = obs_arrays["cam1"]
 
-                # Keep state (flatten all non-image keys into state)
-                state_keys = [k for k in obs_keys if k not in ("agentview_image", "image_left_eye", "cam0", "robot0_eye_in_hand_image", "image_right_eye", "cam1")]
-                if state_keys:
-                    state_list = [obs_arrays[k] for k in state_keys]
-                    # Flatten each to 2D (timesteps, features) and concatenate
-                    state_list_flat = []
-                    for s in state_list:
-                        if s.ndim == 1:
-                            s = s[:, None]
-                        elif s.ndim > 2:
-                            s = s.reshape(s.shape[0], -1)
-                        state_list_flat.append(s)
-                    traj_dict["state"] = np.concatenate(state_list_flat, axis=-1)
-                    state_dim = traj_dict["state"].shape[-1]
+                # Extract state: prefer "proprio" key (what the env returns), fallback to flattening all non-image keys
+                if "proprio" in obs_arrays:
+                    traj_dict["state"] = obs_arrays["proprio"]
+                elif "state" in obs_arrays:
+                    traj_dict["state"] = obs_arrays["state"]
+                else:
+                    # Fallback: flatten all non-image keys into state
+                    state_keys = [k for k in obs_keys if k not in ("agentview_image", "image_left_eye", "cam0", "robot0_eye_in_hand_image", "image_right_eye", "cam1")]
+                    if state_keys:
+                        state_list = [obs_arrays[k] for k in state_keys]
+                        state_list_flat = []
+                        for s in state_list:
+                            if s.ndim == 1:
+                                s = s[:, None]
+                            elif s.ndim > 2:
+                                s = s.reshape(s.shape[0], -1)
+                            state_list_flat.append(s)
+                        traj_dict["state"] = np.concatenate(state_list_flat, axis=-1)
 
                 traj_dict["actions"] = actions
                 traj_dict["rewards"] = rewards
@@ -426,6 +430,13 @@ def get_train_val_datasets(config):
 
     if not all_trajs:
         raise ValueError(f"No trajectories loaded from {demo_dir}")
+    
+    # Get actual state_dim and action_dim from loaded data
+    if "state" in all_trajs[0]:
+        state_dim = all_trajs[0]["state"].shape[-1]
+    else:
+        state_dim = 0
+    action_dim = all_trajs[0]["actions"].shape[-1]
     
     num_exp_trajs = getattr(config, "num_exp_trajs", len(all_trajs))
     num_val_trajs = getattr(config, "num_exp_val_trajs", 0)

@@ -344,6 +344,30 @@ def mixed_sample(
         if key in train_batch.keys():
             expert_batch[key] = torch.tensor(expert_batch[key], dtype=torch.float32)
             train_batch[key] = torch.tensor(train_batch[key], dtype=torch.float32)
+            
+            # Resize images if there's a mismatch - shape is [B, T, H, W, pred_horizon, C]
+            if "image" in key and expert_batch[key].shape != train_batch[key].shape:
+                import torch.nn.functional as F
+                target_h, target_w = 64, 64
+                
+                # expert: [8, 32, 84, 64, 64, 2], train: [8, 32, 64, 64, 64, 2]
+                # Need to resize dim 2 (H) from 84 to 64
+                if expert_batch[key].shape[2] != target_h or expert_batch[key].shape[3] != target_w:
+                    # Reshape to [B*T*pred_horizon, C, H, W] for interpolate
+                    B, T, H, W, P, C = expert_batch[key].shape
+                    expert_batch[key] = expert_batch[key].permute(0, 1, 4, 5, 2, 3)  # [B, T, P, C, H, W]
+                    expert_batch[key] = expert_batch[key].reshape(B*T*P*C, H, W).unsqueeze(1)  # [B*T*P*C, 1, H, W]
+                    expert_batch[key] = F.interpolate(expert_batch[key], size=(target_h, target_w), mode='bilinear', align_corners=False)
+                    expert_batch[key] = expert_batch[key].squeeze(1).reshape(B, T, P, C, target_h, target_w)  # [B, T, P, C, H, W]
+                    expert_batch[key] = expert_batch[key].permute(0, 1, 4, 5, 2, 3)  # [B, T, H, W, P, C]
+                
+                if train_batch[key].shape[2] != target_h or train_batch[key].shape[3] != target_w:
+                    B, T, H, W, P, C = train_batch[key].shape
+                    train_batch[key] = train_batch[key].permute(0, 1, 4, 5, 2, 3)  # [B, T, P, C, H, W]
+                    train_batch[key] = train_batch[key].reshape(B*T*P*C, H, W).unsqueeze(1)  # [B*T*P*C, 1, H, W]
+                    train_batch[key] = F.interpolate(train_batch[key], size=(target_h, target_w), mode='bilinear', align_corners=False)
+                    train_batch[key] = train_batch[key].squeeze(1).reshape(B, T, P, C, target_h, target_w)  # [B, T, P, C, H, W]
+                    train_batch[key] = train_batch[key].permute(0, 1, 4, 5, 2, 3)  # [B, T, H, W, P, C]
             data_batch[key] = torch.cat(
                 [expert_batch[key], train_batch[key]], dim=0
             ).to(device)

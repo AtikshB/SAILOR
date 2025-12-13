@@ -6,14 +6,14 @@ Usage:
     python scripts/collect_humanoid_demo.py --task h1hand_push --outdir demos/push --num-episodes 50 --policy-type reach_single
 """
 
+# MUST BE FIRST: Enable osmesa backend for headless rendering (CPU-based)
 import os
+os.environ["MUJOCO_GL"] = "osmesa"
+
 import sys
 import argparse
 from types import SimpleNamespace
 from pathlib import Path
-
-# Enable EGL backend for headless rendering
-os.environ.setdefault("MUJOCO_GL", "egl")
 
 # Add repo root to path so we can import environments module
 sys.path.insert(0, str(Path(__file__).parent.parent))

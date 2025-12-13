@@ -2,7 +2,6 @@ import argparse
 import collections
 import contextlib
 import gc
-import os
 import pathlib
 import sys
 
@@ -136,7 +135,9 @@ def train_eval(config):
         else:
             envs = make_env(config)
     elif suite in ("humanoid-bench", "humanoid_bench", "humanoid"):
-        envs = make_env(config)
+        envs = ConcurrentEnvs(
+            config=config, env_make=make_env, num_envs=config.num_envs
+        )
 
     acts = envs.action_space
     print(f"Action Space: {acts}. Low: {acts.low}. High: {acts.high}")
@@ -289,9 +290,32 @@ def make_env(config):
         env = wrappers.UUID(env)
 
     elif suite in ("humanoid-bench", "humanoid_bench", "humanoid"):
-        from environments.humanoid_bench.utils import make_env_humanoid, get_train_val_datasets
+        from environments.humanoid_bench.utils import make_env_humanoid, get_train_val_datasets, _find_bundled_policy_dir
+        from pathlib import Path
 
-        env = make_env_humanoid(config=config, suite=suite, task=task)
+        # Get policy info if specified in config
+        policy_type = getattr(config, "policy_type", None)
+        policy_kwargs = {}
+        
+        if policy_type:
+            # Find the bundled policy directory
+            robot, control, taskname = task.split("_", 2)
+            if "double" in policy_type:
+                policy_dir_name = "reach_two_hands"
+            elif "single" in policy_type:
+                policy_dir_name = "reach_one_hand"
+            else:
+                policy_dir_name = None
+            
+            if policy_dir_name:
+                policy_dir = Path(__file__).parent / "humanoid-bench" / "data" / policy_dir_name
+                if policy_dir.exists():
+                    policy_kwargs["policy_path"] = str(policy_dir / "torch_model.pt")
+                    policy_kwargs["mean_path"] = str(policy_dir / "mean.npy") if (policy_dir / "mean.npy").exists() else None
+                    policy_kwargs["var_path"] = str(policy_dir / "var.npy") if (policy_dir / "var.npy").exists() else None
+                    policy_kwargs["policy_type"] = policy_type
+
+        env = make_env_humanoid(config=config, suite=suite, task=task, **policy_kwargs)
         env = wrappers.TimeLimit(env, duration=config.time_limit)
         env = wrappers.SelectAction(env, key="action")
         env = wrappers.UUID(env)

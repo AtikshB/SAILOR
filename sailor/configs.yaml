@@ -28,7 +28,7 @@ defaults:
   num_exp_trajs: -1 # To be specified when starting a new run
   num_exp_val_trajs: 1
   normalize_state_actions: False
-  image_size: 84
+  image_size: 64
   obs_horizon: 2 # Number of observations to stack
   action_horizon: 1 # Number of actions to take
   pred_horizon: 8 # Number of actions to stack
@@ -37,13 +37,13 @@ defaults:
   action_dim: -1 # To be set when loading expert data
 
   # Evaluation
-  eval_num_runs: 50
+  eval_num_runs: 5
   visualize_eval: True # Store videos of all eval runs
-  log_every: 50
+  log_every: 5
 
   # Environment
   task: null
-  num_envs: 10
+  num_envs: 2
   time_limit: -1 # overwritten for each env, defined below
   high_res_render: False # If true, videos will be stored in high resolution
   highres_img_size: 1024
@@ -94,7 +94,7 @@ defaults:
 
   # DP Config
   dp:
-    train_steps: 1000000
+    train_steps: 10
     batch_size: 256
     lr: 0.0001
     max_iterations: 500000
@@ -218,11 +218,12 @@ maniskill:
 
 humanoid-bench:
   action_repeat: 1
-  image_size: 84
+  image_size: 64
+  policy_type: "reach_double_absolute"  # For h1hand reach tasks
 
   dp:
     shared_mlp: []
-    train_steps: 24000
+    train_steps: 100
     eval_freq: 12000
 
   env_max_steps:

@@ -36,8 +36,8 @@ class HumanoidBenchWrapper:
         # Observation space: images plus optional state
         img_shape = (int(config.image_size), int(config.image_size), 3)
         observation_space = spaces.Dict()
-        observation_space["image_left_eye"] = spaces.Box(low=0, high=255, shape=img_shape, dtype=np.uint8)
-        observation_space["image_right_eye"] = spaces.Box(low=0, high=255, shape=img_shape, dtype=np.uint8)
+        observation_space["agentview_image"] = spaces.Box(low=0, high=255, shape=img_shape, dtype=np.uint8)
+        observation_space["robot0_eye_in_hand_image"] = spaces.Box(low=0, high=255, shape=img_shape, dtype=np.uint8)
 
         # Try to detect a flattened proprio/state vector
         try:
@@ -64,34 +64,33 @@ class HumanoidBenchWrapper:
         return out
 
     def _process_raw_obs(self, raw_obs):
-        # raw_obs may be a dict from ObservationWrapper
-        if isinstance(raw_obs, dict):
-            left = raw_obs.get("image_left_eye")
-            right = raw_obs.get("image_right_eye")
-            state = raw_obs.get("proprio") if "proprio" in raw_obs else raw_obs.get("state")
-        else:
-            # As a last resort, try to call helper on the env
-            left = right = None
-            state = None
-            try:
-                cam = self.env.get_camera_obs()
-                left = cam.get("image_left_eye")
-                right = cam.get("image_right_eye")
-            except Exception:
-                pass
-
-        # Ensure images exist and have correct dtype
-        if left is None:
-            left = np.zeros((self.config.image_size, self.config.image_size, 3), dtype=np.uint8)
-        if right is None:
-            right = np.zeros((self.config.image_size, self.config.image_size, 3), dtype=np.uint8)
-
+        # With obs_wrapper="gym_dict", raw_obs is a dictionary with proprio and camera keys
+        # We just need to remap the keys to SAILOR's expected format
+        
+        if not isinstance(raw_obs, dict):
+            raise ValueError(f"Expected raw_obs to be a dict, got {type(raw_obs)}")
+        
         obs = OrderedDict()
-        obs["image_left_eye"] = np.asarray(left, dtype=np.uint8)
-        obs["image_right_eye"] = np.asarray(right, dtype=np.uint8)
-        if state is not None:
-            obs["state"] = np.asarray(state, dtype=np.float32).reshape(-1)
-
+        
+        # Map camera observations to SAILOR keys
+        # Prefer cam_default and cam_hand_visible, fallback to eye cameras
+        if "cam_default" in raw_obs:
+            obs["agentview_image"] = np.asarray(raw_obs["cam_default"], dtype=np.uint8)
+        elif "image_left_eye" in raw_obs:
+            obs["agentview_image"] = np.asarray(raw_obs["image_left_eye"], dtype=np.uint8)
+        
+        # cam_hand_visible -> robot0_eye_in_hand_image (robot perspective)
+        if "cam_hand_visible" in raw_obs:
+            obs["robot0_eye_in_hand_image"] = np.asarray(raw_obs["cam_hand_visible"], dtype=np.uint8)
+        elif "image_right_eye" in raw_obs:
+            obs["robot0_eye_in_hand_image"] = np.asarray(raw_obs["image_right_eye"], dtype=np.uint8)
+        
+        # Extract proprio/state
+        if "proprio" in raw_obs:
+            obs["state"] = np.asarray(raw_obs["proprio"], dtype=np.float32).reshape(-1)
+        elif "state" in raw_obs:
+            obs["state"] = np.asarray(raw_obs["state"], dtype=np.float32).reshape(-1)
+        
         return obs
 
     def reset(self, **kwargs):
