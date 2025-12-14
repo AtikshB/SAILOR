@@ -1,3 +1,11 @@
+# X-SAILOR
+
+This is an extension of SAILOR to work with humanoid robots and more environments.
+
+Please see the branches `robocasa` and `humanoid-bench` for the specific case studies.
+
+Original README continues below:
+
 # :sailboat: SAILOR: Searching Across Imagined Latents Online for Recovery 
 
 Official implementation of SAILOR introduced in
