@@ -403,12 +403,10 @@ class SAILORTrainer:
             self.config.train_dp_mppi_params["warmstart_percentage_env_steps"]
             * self.config.train_dp_mppi_params["n_env_steps"]
         )
-        num_steps_to_collect = 1000
         num_warmstart_itrs = int(
             num_steps_to_collect
             * self.config.train_dp_mppi_params["warmstart_train_ratio"]
         )
-        num_warmstart_itrs = 10
         cprint(
             f"Number of steps to collect for warmstart: {num_steps_to_collect}\
             \nNumber of warm start itrs: {num_warmstart_itrs}",

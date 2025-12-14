@@ -33,21 +33,21 @@ class HumanoidBenchWrapper:
             # Fallback: unknown action space
             self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(0,), dtype=np.float32)
 
-        # Observation space: images plus optional state
+        # Observation space: images plus state
         img_shape = (int(config.image_size), int(config.image_size), 3)
         observation_space = spaces.Dict()
         observation_space["agentview_image"] = spaces.Box(low=0, high=255, shape=img_shape, dtype=np.uint8)
         observation_space["robot0_eye_in_hand_image"] = spaces.Box(low=0, high=255, shape=img_shape, dtype=np.uint8)
-
-        # Try to detect a flattened proprio/state vector
+        
+        # Try to detect state dimension from a sample observation
         try:
             sample = self._safe_reset_sample()
-            if isinstance(sample, dict) and "proprio" in sample:
-                state_dim = int(np.prod(sample["proprio"].shape))
+            if isinstance(sample, np.ndarray):
+                state_dim = int(np.prod(sample.shape))
                 observation_space["state"] = spaces.Box(low=-np.inf, high=np.inf, shape=(state_dim,), dtype=np.float32)
         except Exception:
-            # If detection fails, don't include `state` key
-            pass
+            # Default to 190D for H1 humanoid if detection fails
+            observation_space["state"] = spaces.Box(low=-np.inf, high=np.inf, shape=(190,), dtype=np.float32)
 
         self.observation_space = observation_space
 
@@ -64,32 +64,26 @@ class HumanoidBenchWrapper:
         return out
 
     def _process_raw_obs(self, raw_obs):
-        # With obs_wrapper="gym_dict", raw_obs is a dictionary with proprio and camera keys
-        # We just need to remap the keys to SAILOR's expected format
+        """Process raw observation from environment.
         
-        if not isinstance(raw_obs, dict):
-            raise ValueError(f"Expected raw_obs to be a dict, got {type(raw_obs)}")
-        
+        When obs_wrapper="False", raw_obs is a flat numpy array (privileged state).
+        We need to manually render images and build the observation dict.
+        """
         obs = OrderedDict()
         
-        # Map camera observations to SAILOR keys
-        # Prefer cam_default and cam_hand_visible, fallback to eye cameras
-        if "cam_default" in raw_obs:
-            obs["agentview_image"] = np.asarray(raw_obs["cam_default"], dtype=np.uint8)
-        elif "image_left_eye" in raw_obs:
-            obs["agentview_image"] = np.asarray(raw_obs["image_left_eye"], dtype=np.uint8)
+        # Manually render images from cameras
+        img_left = self.env.unwrapped.mujoco_renderer.render(
+            render_mode="rgb_array", camera_name="left_eye_camera"
+        )
+        img_right = self.env.unwrapped.mujoco_renderer.render(
+            render_mode="rgb_array", camera_name="right_eye_camera"
+        )
         
-        # cam_hand_visible -> robot0_eye_in_hand_image (robot perspective)
-        if "cam_hand_visible" in raw_obs:
-            obs["robot0_eye_in_hand_image"] = np.asarray(raw_obs["cam_hand_visible"], dtype=np.uint8)
-        elif "image_right_eye" in raw_obs:
-            obs["robot0_eye_in_hand_image"] = np.asarray(raw_obs["image_right_eye"], dtype=np.uint8)
+        obs["agentview_image"] = np.asarray(img_left, dtype=np.uint8)
+        obs["robot0_eye_in_hand_image"] = np.asarray(img_right, dtype=np.uint8)
         
-        # Extract proprio/state
-        if "proprio" in raw_obs:
-            obs["state"] = np.asarray(raw_obs["proprio"], dtype=np.float32).reshape(-1)
-        elif "state" in raw_obs:
-            obs["state"] = np.asarray(raw_obs["state"], dtype=np.float32).reshape(-1)
+        # Include state (raw_obs is the privileged state array)
+        obs["state"] = np.asarray(raw_obs, dtype=np.float32).reshape(-1)
         
         return obs
 

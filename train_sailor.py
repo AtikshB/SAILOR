@@ -4,6 +4,10 @@ import contextlib
 import gc
 import pathlib
 import sys
+import os
+
+# Set MUJOCO_GL before any MuJoCo/Gymnasium imports
+os.environ.setdefault('MUJOCO_GL', 'egl')
 
 sys.path.append(
     os.path.join(os.getcwd(), "sailor/diffusion")

@@ -48,6 +48,9 @@ def make_env_humanoid(config, suite, task, **env_kwargs):
     Extra keyword arguments are forwarded to the `HumanoidEnv` constructor and
     can include `policy_path`, `mean_path`, `var_path`, and `policy_type`.
     """
+    # Ensure MUJOCO_GL is set before creating env
+    os.environ['MUJOCO_GL'] = 'egl'
+    
     try:
         from humanoid_bench.env import HumanoidEnv
     except Exception as e:
@@ -61,8 +64,7 @@ def make_env_humanoid(config, suite, task, **env_kwargs):
         render_mode="rgb_array",
         width=int(getattr(config, "image_size", 84)),
         height=int(getattr(config, "image_size", 84)),
-        obs_wrapper="True",  # Enable obs wrapper to get dict with images
-        sensors="image",  # This will trigger camera observations (left_eye_camera, right_eye_camera)
+        obs_wrapper="False",  # Use False for consistent image-only observations
     )
     # user-supplied env kwargs override defaults
     kwargs.update(env_kwargs)
@@ -108,6 +110,147 @@ def _find_bundled_policy_dir(taskname: str):
             return d
 
     return None
+
+
+def collect_with_ppo_policy(config, outdir: str, num_episodes: int = 10, max_steps: int = 1000, ppo_model_path: str = None):
+    """Collect rollouts using a trained PPO policy (stable-baselines3) into a single HDF5.
+    
+    Args:
+        config: Config object with task information
+        outdir: Directory to save HDF5 file
+        num_episodes: Number of episodes to collect
+        max_steps: Maximum steps per episode
+        ppo_model_path: Path to the trained PPO model (.zip file)
+    """
+    try:
+        from stable_baselines3 import PPO
+    except ImportError:
+        raise ImportError("stable-baselines3 is required. Install with: pip install stable-baselines3")
+    
+    try:
+        suite, task = config.task.split("__", 1)
+    except Exception:
+        raise ValueError("config.task must be 'humanoid-bench__<robot>_<control>_<task>'")
+
+    robot, control, taskname = _parse_task_string(task)
+    
+    if ppo_model_path is None:
+        raise ValueError("ppo_model_path must be provided")
+    
+    cprint(f"Loading PPO policy from {ppo_model_path}", "yellow")
+    
+    # Create environment WITHOUT obs wrapper to get flat privileged state for PPO
+    from humanoid_bench.env import HumanoidEnv
+    
+    env = HumanoidEnv(
+        robot=robot,
+        control=control,
+        task=taskname,
+        render_mode="rgb_array",
+        width=int(getattr(config, "image_size", 64)),
+        height=int(getattr(config, "image_size", 64)),
+        obs_wrapper="False",
+    )
+    
+    # Load PPO model
+    model = PPO.load(ppo_model_path)
+    
+    outdir = Path(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    traj_lengths = []
+
+    try:
+        import h5py
+    except Exception as e:
+        raise ImportError("h5py is required for data collection. Install with `pip install h5py`.") from e
+
+    import pickle
+
+    h5_path = outdir / f"humanoid_{taskname}_ppo.hdf5"
+    h5file = h5py.File(h5_path, "w")
+
+    for ep in range(int(num_episodes)):
+        obs_out = []
+        actions = []
+        rewards = []
+        dones = []
+
+        cprint(f"Starting episode {ep+1}/{num_episodes}...", "yellow")
+        raw = env.reset()
+        raw_obs = raw[0] if isinstance(raw, tuple) and len(raw) >= 1 else raw
+
+        for t in range(int(max_steps)):
+            # raw_obs is now flat privileged state array that PPO expects
+            action, _states = model.predict(raw_obs, deterministic=True)
+            
+            out = env.step(action)
+            if isinstance(out, tuple) and len(out) == 5:
+                raw_obs, rew, term, trunc, info = out
+                done = bool(term or trunc)
+            elif isinstance(out, tuple) and len(out) == 4:
+                raw_obs, rew, done, info = out
+            else:
+                raw_obs = out[0] if isinstance(out, tuple) else out
+                rew = 0.0
+                done = False
+
+            if (t + 1) >= int(max_steps):
+                done = True
+            
+            # Manually render images from cameras
+            img_left = env.unwrapped.mujoco_renderer.render(
+                render_mode="rgb_array", camera_name="left_eye_camera"
+            )
+            img_right = env.unwrapped.mujoco_renderer.render(
+                render_mode="rgb_array", camera_name="right_eye_camera"
+            )
+            
+            # Build observation dict with standard image keys and state
+            obs_dict = {
+                "agentview_image": img_left,  # left_eye as agentview (scene overview)
+                "robot0_eye_in_hand_image": img_right,  # right_eye as robot perspective
+                "state": raw_obs,  # Flat privileged state from env (190D)
+            }
+            obs_out.append(obs_dict)
+            actions.append(np.asarray(action, dtype=np.float32))
+            rewards.append(float(rew))
+            dones.append(bool(done))
+            
+            if (t + 1) % 100 == 0:
+                print(f"  Step {t+1}/{max_steps}...", end='\r', flush=True)
+
+            if done:
+                break
+
+        grp = h5file.create_group(f"ep_{ep:05d}")
+        grp.create_dataset("actions", data=np.array(actions, dtype=np.float32), compression="gzip")
+        grp.create_dataset("rewards", data=np.array(rewards, dtype=np.float32), compression="gzip")
+        grp.create_dataset("dones", data=np.array(dones, dtype=np.uint8), compression="gzip")
+
+        obs_bytes = np.array([np.void(pickle.dumps(o, protocol=4)) for o in obs_out], dtype=np.void)
+        grp.create_dataset("obs", data=obs_bytes, compression="gzip")
+
+        traj_lengths.append(len(rewards))
+        total_reward = sum(rewards)
+        cprint(f"✓ Episode {ep+1}/{num_episodes} complete: {len(rewards)} steps, total reward: {total_reward:.2f}", "green")
+        time.sleep(0.1)
+
+    try:
+        env.close()
+    except Exception:
+        pass
+
+    if traj_lengths:
+        lengths = np.array(traj_lengths)
+        cprint(
+            f"Traj lengths — mean: {lengths.mean():.1f}, min: {lengths.min()}, max: {lengths.max()}",
+            "yellow",
+        )
+
+    h5file.flush()
+    h5file.close()
+    cprint(f"Saved aggregated HDF5: {h5_path}", "yellow")
+    return [str(h5_path)]
 
 
 def collect_with_bundled_policy(config, outdir: str, num_episodes: int = 10, max_steps: int = 1000, policy_type: str = None):
@@ -403,11 +546,11 @@ def get_train_val_datasets(config):
                 elif "cam1" in obs_arrays:
                     traj_dict["robot0_eye_in_hand_image"] = obs_arrays["cam1"]
 
-                # Extract state: prefer "proprio" key (what the env returns), fallback to flattening all non-image keys
-                if "proprio" in obs_arrays:
-                    traj_dict["state"] = obs_arrays["proprio"]
-                elif "state" in obs_arrays:
+                # Extract state: prefer "state" key (from PPO data), fallback to "proprio", then flatten non-image keys
+                if "state" in obs_arrays:
                     traj_dict["state"] = obs_arrays["state"]
+                elif "proprio" in obs_arrays:
+                    traj_dict["state"] = obs_arrays["proprio"]
                 else:
                     # Fallback: flatten all non-image keys into state
                     state_keys = [k for k in obs_keys if k not in ("agentview_image", "image_left_eye", "cam0", "robot0_eye_in_hand_image", "image_right_eye", "cam1")]
